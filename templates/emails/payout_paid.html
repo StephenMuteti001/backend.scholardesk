@@ -1,0 +1,18 @@
+{% extends "emails/base.html" %}
+
+{% block content %}
+<p>Hi <strong>{{ full_name }}</strong>,</p>
+
+<p>Your payout for {{ period_start }} - {{ period_end }} has been <strong>paid</strong>.</p>
+
+<div style="background-color:#dcfce7; padding:16px; border-radius:8px; margin:16px 0; text-align:center;">
+  <p style="margin:0; font-size:12px; text-transform:uppercase; letter-spacing:0.05em; color:#166534;">Amount paid</p>
+  <p style="margin:4px 0 0; font-size:24px; font-weight:700; color:#1e293b;">{{ currency }} {{ amount }}</p>
+</div>
+
+<p style="font-size:13px; color:#6b7280;">It should reflect via your chosen payment method shortly.</p>
+
+<div style="text-align:center; margin:24px 0;">
+  <a href="{{ dashboard_url }}" class="btn-primary">View earnings</a>
+</div>
+{% endblock %}

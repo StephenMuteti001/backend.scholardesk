@@ -1,0 +1,27 @@
+{% extends "emails/base.html" %}
+
+{% block content %}
+<p>Hi {{ expert_name }},</p>
+
+{% if outcome == "approved" %}
+<p>Great news - the customer approved your delivery on <strong>{{ order_title }}</strong> ({{ order_reference }}). This order is now complete.</p>
+{% elif outcome == "revision_requested" %}
+<p>The customer has asked for a revision on <strong>{{ order_title }}</strong> ({{ order_reference }}).</p>
+{% if note %}
+<div style="background-color:#fff7ed; padding:16px; border-radius:8px; margin:16px 0;">
+  <p style="margin:0; font-size:13px; color:#9a3412;"><strong>Their note:</strong> {{ note }}</p>
+</div>
+{% endif %}
+{% else %}
+<p>The customer rejected your delivery on <strong>{{ order_title }}</strong> ({{ order_reference }}). Our support team will be in touch about next steps.</p>
+{% if note %}
+<div style="background-color:#fef2f2; padding:16px; border-radius:8px; margin:16px 0;">
+  <p style="margin:0; font-size:13px; color:#991b1b;"><strong>Their note:</strong> {{ note }}</p>
+</div>
+{% endif %}
+{% endif %}
+
+<div style="text-align:center; margin:24px 0;">
+  <a href="{{ order_url }}" class="btn-primary">View order</a>
+</div>
+{% endblock %}

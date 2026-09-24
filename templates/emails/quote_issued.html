@@ -1,0 +1,20 @@
+{% extends "emails/base.html" %}
+
+{% block content %}
+<p>Hi {{ customer_name }},</p>
+
+<p>Good news - our support team has reviewed your request <strong>"{{ order_title }}"</strong> and put together a quote for you.</p>
+
+<div style="background-color:#eff6ff; padding:16px; border-radius:8px; margin:16px 0; text-align:center;">
+  <p style="margin:0; font-size:12px; text-transform:uppercase; letter-spacing:0.05em; color:#3b82f6;">Quoted amount</p>
+  <p style="margin:4px 0 0; font-size:24px; font-weight:700; color:#1e293b;">{{ currency }} {{ amount }}</p>
+</div>
+
+<p>Head over to your portal to review the details - you can accept it, propose a different amount, or chat directly with our support team if anything about the scope or timeline needs adjusting first.</p>
+
+<div style="text-align:center; margin:24px 0;">
+  <a href="{{ portal_url }}" class="btn-primary">Review your quote</a>
+</div>
+
+<p style="font-size:13px; color:#6b7280;">Prefer to talk it through first? Open the chat in your portal and our support team will get right back to you.</p>
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "emails/base.html" %}
+
+{% block content %}
+<p>Hi {{ customer_name }},</p>
+
+<p>New work has been delivered on your order.</p>
+
+<div style="background-color:#f8fafc; padding:16px; border-radius:8px; margin:16px 0;">
+  <p style="margin:0 0 6px;"><strong>{{ order_title }}</strong></p>
+  <p style="margin:0; font-size:13px; color:#6b7280;">Order {{ order_reference }} · Version {{ version }}</p>
+</div>
+
+<p>Please take a look and let us know whether it's ready to go, needs a revision, or isn't what you were expecting.</p>
+
+<div style="text-align:center; margin:24px 0;">
+  <a href="{{ order_url }}" class="btn-primary">Review your delivery</a>
+</div>
+{% endblock %}

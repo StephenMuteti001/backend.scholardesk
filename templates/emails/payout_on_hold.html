@@ -1,0 +1,15 @@
+{% extends "emails/base.html" %}
+
+{% block content %}
+<p>Hi <strong>{{ full_name }}</strong>,</p>
+
+<p>Your payout for {{ period_start }} - {{ period_end }} ({{ currency }} {{ amount }}) has been placed <strong>on hold</strong>{% if reason %}: {{ reason }}{% endif %}.</p>
+
+<div class="notice" style="margin:16px 0;">
+  Our support team will follow up with next steps. Reach out any time if you have questions.
+</div>
+
+<div style="text-align:center; margin:24px 0;">
+  <a href="{{ dashboard_url }}" class="btn-primary">View earnings</a>
+</div>
+{% endblock %}
