@@ -14,6 +14,8 @@ from experts.schemas import (
     create_expert_schema,
     update_expert_schema,
     expert_status_schema,
+    validate_bulk_ids,
+    validate_bulk_status,
 )
 
 bp = Blueprint(
@@ -228,11 +230,13 @@ def update_status(expert_id):
 @require_roles(*ADMIN_ROLES)
 def bulk_status():
 
-    payload = request.get_json() or {}
+    payload = request.get_json(silent=True) or {}
+
+    validated = validate_bulk_status(payload)
 
     experts = ExpertService.bulk_update_status(
-        payload["ids"],
-        payload["status"],
+        validated["ids"],
+        validated["status"],
     )
 
     return success_response({
@@ -244,10 +248,12 @@ def bulk_status():
 @require_roles(*ADMIN_ROLES)
 def bulk_delete():
 
-    payload = request.get_json() or {}
+    payload = request.get_json(silent=True) or {}
+
+    validated = validate_bulk_ids(payload)
 
     deleted = ExpertService.bulk_delete(
-        payload["ids"]
+        validated["ids"]
     )
 
     return success_response(

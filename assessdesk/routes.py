@@ -24,7 +24,7 @@ from utils.pagination import paginate_query
 from utils.response_formatter import error_response, success_response
 from utils.roles import ADMIN_ROLES
 
-from assessdesk import paystack, service
+from assessdesk import service
 from assessdesk.constants import DESKTOP_ACCESS_TTL
 from assessdesk.schemas import (
     serialize_ad_user,
@@ -245,20 +245,11 @@ def my_purchases():
 
 @public_bp.post("/webhooks/paystack")
 def paystack_webhook():
-    raw = request.get_data()
-    if not paystack.valid_webhook_signature(raw, request.headers.get("x-paystack-signature", "")):
-        return error_response("INVALID_SIGNATURE", "Invalid signature.", status=401)
-    event = request.get_json(silent=True) or {}
-    data = event.get("data") or {}
-    meta = data.get("metadata") or {}
-    if event.get("event") == "charge.success" and meta.get("product") == "assessdesk":
-        try:
-            # Re-verify with Paystack rather than trusting the payload.
-            service.fulfil_purchase(data.get("reference"))
-        except ServiceError as e:
-            log.warning("[assessdesk] webhook fulfil failed for %s: %s", data.get("reference"), e.message)
-    # Always 200 so Paystack stops retrying events we've handled or ignore.
-    return success_response(message="ok")
+    # One dispatcher for every Paystack event on the account - see
+    # payments/webhooks.py. Kept at this URL for existing configuration.
+    from payments.webhooks import handle_paystack_webhook
+
+    return handle_paystack_webhook()
 
 
 # ---------------------------------------------------------------------------

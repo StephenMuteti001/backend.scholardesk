@@ -74,7 +74,7 @@ class Config:
     # needs its own base URL for email deep-links. FRONTEND_URL is the
     # auth/marketing portal (email verification, login OTP, register).
     FRONTEND_URL = os.getenv("FRONTEND_URL", "https://scholardesk.pro")
-    CUSTOMER_FRONTEND_URL = os.getenv(
+    AUTH_FRONTEND_URL = os.getenv(
         "AUTH_FRONTEND_URL", "https://auth.scholardesk.pro"
     )
     CUSTOMER_FRONTEND_URL = os.getenv(

@@ -2,7 +2,11 @@
 
 from flask import Blueprint, request
 
-from support_chat.schemas import validate_send_message, validate_start_thread
+from support_chat.schemas import (
+    validate_pagination,
+    validate_send_message,
+    validate_start_thread,
+)
 from support_chat.service import (
     list_messages,
     list_threads,
@@ -49,7 +53,11 @@ def list_threads_route():
     try:
         user = get_current_user()
 
-        return success_response({"data": list_threads(user)})
+        pagination = validate_pagination(request.args)
+
+        return success_response(
+            {"data": list_threads(user, **pagination)}
+        )
 
     except (ValueError, ServiceError) as exc:
         return _handle_service_error(exc)
@@ -85,8 +93,10 @@ def list_messages_route(chat_id):
     try:
         user = get_current_user()
 
+        pagination = validate_pagination(request.args)
+
         return success_response(
-            {"data": list_messages(chat_id, user)}
+            {"data": list_messages(chat_id, user, **pagination)}
         )
 
     except (ValueError, ServiceError) as exc:

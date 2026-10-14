@@ -1,5 +1,7 @@
 # customer_orders/schemas.py
 
+import re
+
 from customer_orders.constants import (
     DEFAULT_CURRENCY,
     DEFAULT_PAGE,
@@ -245,17 +247,30 @@ def validate_update_order(payload):
 # ---------------------------------------------------------------------------
 
 def validate_pay_order(payload):
+    """
+    The pay endpoint takes no meaningful input any more: the amount
+    comes from the Order and settlement from Paystack. Anything the
+    client sends is ignored; only the body's type is checked so a
+    malformed body is still a clean 422.
+    """
     payload = payload or {}
 
     if not isinstance(payload, dict):
         raise ValidationError("Request body must be an object.")
 
-    gateway = _string(payload.get("gateway"), "gateway") or "Online Payment"
-    payment_reference = _string(
-        payload.get("paymentReference"), "paymentReference"
-    )
+    return {}
 
-    return {"gateway": gateway, "payment_reference": payment_reference}
+
+_PAYMENT_REFERENCE_RE = re.compile(r"^[A-Z0-9-]{6,64}$")
+
+
+def validate_payment_reference(reference):
+    reference = (reference or "").strip().upper()
+
+    if not _PAYMENT_REFERENCE_RE.match(reference):
+        raise ValidationError("Invalid payment reference.")
+
+    return reference
 
 
 # ---------------------------------------------------------------------------

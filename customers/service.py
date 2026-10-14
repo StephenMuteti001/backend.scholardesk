@@ -199,21 +199,35 @@ def _customer_last_activity(
     )
 
 
-def _build_customer_record(customer):
+# Sentinel distinguishing "not supplied - compute it with a per-customer
+# query" from an explicit value a caller has already resolved in bulk
+# (see _bulk_customer_stats() / list_customers()).
+_UNSET = object()
+
+
+def _build_customer_record(
+    customer,
+    order_count=_UNSET,
+    spend=_UNSET,
+    last_active=_UNSET,
+):
     customer_id = customer.id
 
-    order_count = _customer_order_count(
-        customer_id
-    )
+    if order_count is _UNSET:
+        order_count = _customer_order_count(
+            customer_id
+        )
 
-    spend = _customer_spend(
-        customer_id
-    )
+    if spend is _UNSET:
+        spend = _customer_spend(
+            customer_id
+        )
 
-    last_active = _customer_last_activity(
-        customer,
-        customer_id,
-    )
+    if last_active is _UNSET:
+        last_active = _customer_last_activity(
+            customer,
+            customer_id,
+        )
 
     return CustomerRecord(
         id=str(customer.id),
@@ -361,8 +375,57 @@ def list_customers(
         error_out=False,
     )
 
+    # --------------------------------------------------
+    # Per-customer stats for this page, in one grouped
+    # aggregate query instead of order_count/spend/last_active
+    # queries repeated for every row (see _build_customer_record()).
+    # --------------------------------------------------
+
+    page_customer_ids = [
+        customer.id for customer in pagination.items
+    ]
+
+    order_counts = {}
+    spends = {}
+    last_order_ats = {}
+
+    if page_customer_ids:
+        stats_rows = (
+            db.session.query(
+                _order_client_column().label("customer_id"),
+                func.count(Order.id).label("order_count"),
+                func.coalesce(
+                    func.sum(_order_amount_column()),
+                    0,
+                ).label("spend"),
+                func.max(_order_created_column()).label(
+                    "last_order_at"
+                ),
+            )
+            .filter(
+                _order_client_column().in_(page_customer_ids)
+            )
+            .group_by(_order_client_column())
+            .all()
+        )
+
+        for row in stats_rows:
+            order_counts[row.customer_id] = row.order_count
+            spends[row.customer_id] = Decimal(str(row.spend or 0))
+            last_order_ats[row.customer_id] = row.last_order_at
+
+    user_last_active_field = _user_last_active_column().key
+
     records = [
-        _build_customer_record(customer)
+        _build_customer_record(
+            customer,
+            order_count=order_counts.get(customer.id, 0),
+            spend=spends.get(customer.id, Decimal("0")),
+            last_active=(
+                getattr(customer, user_last_active_field, None)
+                or last_order_ats.get(customer.id)
+            ),
+        )
         for customer in pagination.items
     ]
 

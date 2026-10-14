@@ -346,7 +346,7 @@ def submit_for_review(
             "in-review",
         )
 
-        if not material.file_url:
+        if not (material.file_url or material.storage_key):
             raise ValueError(
                 "A material must have an uploaded file "
                 "before it can be submitted for review."
@@ -383,7 +383,7 @@ def publish_exam_material(
             "published",
         )
 
-        if not material.file_url:
+        if not (material.file_url or material.storage_key):
             raise ValueError(
                 "Cannot publish material without a file."
             )
@@ -840,7 +840,7 @@ def bulk_update_exam_materials(
 
                 if (
                     status == "published"
-                    and not material.file_url
+                    and not (material.file_url or material.storage_key)
                 ):
                     raise ValueError(
                         f"Material '{material.title}' "
@@ -1006,12 +1006,30 @@ def serialize_material_for_customer(material, owned_ids):
         "rating": float(material.rating or 0),
         "downloads": material.downloads or 0,
         "owned": material.id in owned_ids,
-        "downloadUrl": material.file_url if material.id in owned_ids else None,
+        # Relative to the API base; served by the authenticated,
+        # ownership-checked download route, never a raw storage URL.
+        "downloadUrl": (
+            f"/exam-materials/{material.id}/download"
+            if material.id in owned_ids
+            and (material.storage_key or material.file_url)
+            else None
+        ),
     }
+
+
+def serialize_material_for_public(material):
+    """Published catalogue projection; never exposes ownership or storage data."""
+    item = serialize_material_for_customer(material, set())
+    item.pop("owned", None)
+    item.pop("downloadUrl", None)
+    return item
 
 
 def _owned_material_ids(customer_id):
     from orders.order import Order
+
+    if customer_id is None:
+        return set()
 
     rows = (
         db.session.query(Order.material_id)
@@ -1189,7 +1207,28 @@ def search_materials_for_customer(
     }
 
 
+def search_materials_for_public(**filters):
+    """Reuse the paginated published search without performing an ownership lookup."""
+    class AnonymousCatalogueUser:
+        id = None
+
+    result = search_materials_for_customer(AnonymousCatalogueUser(), **filters)
+    result["items"] = [
+        {key: value for key, value in item.items() if key not in {"owned", "downloadUrl"}}
+        for item in result["items"]
+    ]
+    return result
+
+
 def purchase_material(user, material_id):
+    """
+    Opens a Paystack checkout for an exam material. The Order is
+    created `pending` and only becomes `paid` - which is what grants the
+    download - once Paystack confirms it, via
+    orders/checkout_service.py::fulfil_checkout().
+    """
+    from orders.checkout_service import serialize_checkout, start_checkout
+    from orders.order import Order
     from orders.service import OrderService
     from utils.exceptions import ConflictError, NotFoundError
 
@@ -1205,20 +1244,126 @@ def purchase_material(user, material_id):
     if material.id in owned_ids:
         raise ConflictError("You already own this material.")
 
-    order = OrderService.create_from_material(
-        material_obj=material,
-        customer_id=user.id,
-        amount=material.price,
-        gateway="Online Payment",
-        currency=material.currency or "USD",
+    # Re-use the pending order from an abandoned attempt rather than
+    # leaving a new one behind on every click.
+    order = (
+        Order.query.filter_by(
+            customer_id=user.id,
+            source_type="material",
+            material_id=material.id,
+            status="pending",
+        )
+        .order_by(Order.created_at.desc())
+        .first()
+    )
+
+    if order is not None and order.amount != material.price:
+        # The price changed since the abandoned attempt; charge today's.
+        with transaction():
+            order.amount = material.price
+            order.currency = material.currency or "USD"
+
+    if order is None:
+        order = OrderService.create_from_material(
+            material_obj=material,
+            customer_id=user.id,
+            amount=material.price,
+            gateway="Online Payment",
+            currency=material.currency or "USD",
+            status="pending",
+        )
+
+    checkout = start_checkout(order, user)
+
+    return {
+        "checkout": serialize_checkout(checkout),
+        "material": serialize_material_for_customer(material, owned_ids),
+    }
+
+
+# ---------------------------------------------------------------------------
+# File upload + secure download
+# ---------------------------------------------------------------------------
+
+ALLOWED_MATERIAL_EXTENSIONS = {
+    ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
+    ".txt", ".zip", ".epub",
+}
+
+
+def attach_uploaded_file(material_id, file_storage, page_count=None):
+    """
+    Store an admin-uploaded binary under UPLOAD_FOLDER/exam-materials/
+    <material_id>/ (the same local-disk scheme the legacy backend and
+    submissions use) and record its metadata on the material.
+    """
+    import os
+
+    from utils.uploads import relative_upload_path, save_uploaded_file
+
+    if not file_storage or not file_storage.filename:
+        raise ValueError("A file is required.")
+
+    ext = os.path.splitext(file_storage.filename)[1].lower()
+    if ext not in ALLOWED_MATERIAL_EXTENSIONS:
+        raise ValueError(
+            "Unsupported file type. Allowed: "
+            + ", ".join(sorted(ALLOWED_MATERIAL_EXTENSIONS))
+        )
+
+    if page_count not in (None, ""):
+        try:
+            page_count = int(page_count)
+        except (TypeError, ValueError):
+            raise ValueError("Page count must be a whole number.")
+        if page_count < 1:
+            raise ValueError("Page count must be at least 1.")
+    else:
+        page_count = None
+
+    material = _get_material_or_raise(material_id)
+
+    absolute = save_uploaded_file(
+        file_storage, f"exam-materials/{material.id}"
     )
 
     with transaction():
-        material.downloads = (material.downloads or 0) + 1
-        material.revenue = (material.revenue or 0) + material.price
-
+        material = _get_material_or_raise(material_id)
+        material.file_name = file_storage.filename[:255]
+        material.file_size = os.path.getsize(absolute)
+        material.mime_type = (file_storage.mimetype or "application/octet-stream")[:100]
+        material.storage_key = relative_upload_path(absolute)
+        material.file_url = None
+        if page_count is not None:
+            material.page_count = page_count
+        material.updated_at = datetime.utcnow()
         db.session.flush()
 
-    return serialize_material_for_customer(
-        material, owned_ids | {material.id}
-    )
+    return material
+
+
+def resolve_material_download(material, user=None):
+    """
+    Returns ("file", absolute_path) or ("redirect", url). When `user` is
+    given the caller must own the material (a paid order).
+    """
+    import os
+
+    from utils.exceptions import NotFoundError
+    from utils.uploads import resolve_upload_path
+
+    if user is not None and material.id not in _owned_material_ids(user.id):
+        raise NotFoundError("File not found.")
+
+    if material.storage_key:
+        try:
+            path = resolve_upload_path(material.storage_key)
+        except Exception:
+            path = None
+        if path and os.path.isfile(path):
+            return "file", path
+
+    if material.file_url and material.file_url.startswith("https://"):
+        return "redirect", material.file_url
+
+    raise NotFoundError("File not found.")

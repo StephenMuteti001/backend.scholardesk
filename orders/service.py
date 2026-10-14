@@ -938,6 +938,7 @@ class OrderService:
         gateway,
         currency="USD",
         payment_reference=None,
+        status="pending",
     ):
         """
         Sibling of create_from_request() for exam-material purchases
@@ -968,7 +969,7 @@ class OrderService:
                 amount=Decimal(str(amount)),
                 currency=currency,
                 gateway=gateway,
-                status="paid",
+                status=status,
                 payment_reference=payment_reference,
             )
 

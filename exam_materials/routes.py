@@ -1,4 +1,4 @@
-from flask import Blueprint, request
+from flask import Blueprint, redirect, request, send_file
 from utils.authorization import require_roles
 from utils.roles import ADMIN_ROLES
 from flask_jwt_extended import get_jwt_identity
@@ -14,6 +14,8 @@ from exam_materials.schemas import (
 from exam_materials.service import (
     archive_exam_material,
     attach_file,
+    attach_uploaded_file,
+    resolve_material_download,
     bulk_delete_exam_materials,
     bulk_update_exam_materials,
     create_exam_material,
@@ -138,7 +140,7 @@ def _handle_service_error(exc):
             exc.code,
             exc.message,
             exc.details,
-            400,
+            exc.status_code,
         )
 
     return error_response(
@@ -219,6 +221,19 @@ def create_material():
     POST /admin/exam-materials
     """
     try:
+        # Multipart upload (the admin portal): store the binary locally.
+        uploaded = request.files.get("file") if request.files else None
+        if uploaded is not None:
+            material = attach_uploaded_file(
+                material_id,
+                uploaded,
+                request.form.get("page_count"),
+            )
+            return success_response(
+                {"material": _serialize_material(material)},
+                message="Material file attached successfully.",
+            )
+
         payload = request.get_json(
             silent=True
         )
@@ -692,6 +707,7 @@ def bulk_delete_materials():
 from exam_materials.service import (
     list_materials_for_customer,
     purchase_material,
+    search_materials_for_public,
     search_materials_for_customer,
 )
 from utils.authorization import get_current_user
@@ -702,6 +718,26 @@ customer_bp = Blueprint(
     __name__,
     url_prefix="/api/v1/exam-materials",
 )
+
+public_customer_bp = Blueprint(
+    "exam_materials_public_catalogue",
+    __name__,
+    url_prefix="/api/v1/public/exam-materials",
+)
+
+
+@public_customer_bp.get("")
+def list_public_materials_route():
+    try:
+        result = search_materials_for_public(
+            q=request.args.get("q"), subject=request.args.get("subject"),
+            level=request.args.get("level"), category=request.args.get("category"),
+            sort=request.args.get("sort"), page=request.args.get("page", 1, type=int),
+            per_page=request.args.get("per_page", 12, type=int),
+        )
+        return success_response({"data": result["items"], "meta": result["meta"]})
+    except (ValueError, ServiceError) as exc:
+        return _handle_service_error(exc)
 
 
 @customer_bp.get("")
@@ -742,3 +778,76 @@ def purchase_material_route(material_id):
 
     except (ValueError, ServiceError) as exc:
         return _handle_service_error(exc)
+
+
+def _send_material(material, user=None):
+    kind, target = resolve_material_download(material, user)
+    if kind == "redirect":
+        return redirect(target, code=302)
+    return send_file(
+        target,
+        as_attachment=True,
+        download_name=material.file_name or "material",
+        max_age=0,
+    )
+
+
+@exam_materials_bp.get("/<uuid:material_id>/file")
+@require_roles(*ADMIN_ROLES)
+def download_material_file_admin(material_id):
+    try:
+        return _send_material(get_exam_material(material_id))
+    except (ValueError, ServiceError) as exc:
+        return _handle_service_error(exc)
+
+
+@customer_bp.get("/<uuid:material_id>/download")
+@require_roles(*CUSTOMER_ROLES)
+def download_material_route(material_id):
+    from exam_materials.exam_material import ExamMaterial
+    from extensions import db
+    from utils.exceptions import NotFoundError
+
+    try:
+        material = db.session.get(ExamMaterial, material_id)
+        if material is None:
+            raise NotFoundError("File not found.")
+        response = _send_material(material, get_current_user())
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
+    except (ValueError, ServiceError) as exc:
+        return _handle_service_error(exc)
+
+
+def _bulk_status(status):
+    try:
+        payload = request.get_json(silent=True) or {}
+        ids = payload.get("ids")
+        if not isinstance(ids, list) or not ids or not all(
+            isinstance(i, str) and i for i in ids
+        ):
+            return error_response(
+                "VALIDATION_ERROR", "ids must be a non-empty list.", status=400
+            )
+        materials = bulk_update_exam_materials(
+            ids, {"status": status}, _get_current_user_id()
+        )
+        return success_response(
+            {"items": [_serialize_material(m) for m in materials],
+             "count": len(materials)},
+            message="Materials updated successfully.",
+        )
+    except (ValueError, ServiceError) as exc:
+        return _handle_service_error(exc)
+
+
+@exam_materials_bp.post("/bulk/publish")
+@require_roles(*ADMIN_ROLES)
+def bulk_publish_materials():
+    return _bulk_status("published")
+
+
+@exam_materials_bp.post("/bulk/archive")
+@require_roles(*ADMIN_ROLES)
+def bulk_archive_materials():
+    return _bulk_status("archived")

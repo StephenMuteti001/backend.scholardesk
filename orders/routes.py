@@ -6,6 +6,8 @@ from utils.roles import ADMIN_ROLES
 
 from orders.service import OrderService
 from orders.interest_service import OrderInterestService
+# Registers the order_checkouts table with SQLAlchemy/Alembic metadata.
+from orders.checkout import OrderCheckout  # noqa: F401
 from orders.schemas import (
     serialize_order,
     validate_assign_expert_payload,

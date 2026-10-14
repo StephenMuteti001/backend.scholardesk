@@ -37,7 +37,7 @@ from support_chat.support_chat import SupportThread
 from users.user import User
 from utils.exceptions import ConflictError, NotFoundError, ValidationError
 from utils.transaction import transaction
-from utils.uploads import save_uploaded_files
+from utils.uploads import ALLOWED_DOCUMENT_EXTENSIONS, MAX_DOCUMENT_BYTES, save_uploaded_files
 
 
 # ---------------------------------------------------------------------------
@@ -155,10 +155,27 @@ def _submissions_for(order):
     return [submission.to_dict() for submission in submissions]
 
 
-def serialize_order(request):
-    order = (
-        db.session.get(Order, request.order_id) if request.order_id else None
-    )
+# Sentinel distinguishing "not supplied - compute it" from an explicit
+# `None`/`[]` a bulk caller has already resolved for this row. Used by
+# list_orders() below to batch-load the Order/chat/submissions data
+# for a whole page instead of serialize_order() issuing three more
+# queries per row (see _bulk_order_context()).
+_UNSET = object()
+
+
+def serialize_order(request, order=_UNSET, chat_id=_UNSET, submissions=_UNSET):
+    if order is _UNSET:
+        order = (
+            db.session.get(Order, request.order_id)
+            if request.order_id
+            else None
+        )
+
+    if chat_id is _UNSET:
+        chat_id = _chat_id_for(request)
+
+    if submissions is _UNSET:
+        submissions = _submissions_for(order)
 
     metadata = request.metadata_json or {}
     quote = _latest_quote(request)
@@ -200,8 +217,8 @@ def serialize_order(request):
         "currency": (order.currency if order else request.currency)
         or DEFAULT_CURRENCY,
         "quote": _quote_dict(quote),
-        "chatId": _chat_id_for(request),
-        "submissions": _submissions_for(order),
+        "chatId": chat_id,
+        "submissions": submissions,
         "activity": activity,
         "createdAt": (
             request.created_at.isoformat() if request.created_at else None
@@ -217,6 +234,63 @@ def serialize_order(request):
 # ---------------------------------------------------------------------------
 # LIST / GET
 # ---------------------------------------------------------------------------
+
+def _bulk_order_context(requests):
+    """
+    Batch-load everything serialize_order() would otherwise fetch one
+    row at a time (the converted Order, its latest support thread, and
+    its released submissions) so listing a page of requests costs a
+    handful of queries total instead of ~3 extra per row.
+    """
+    order_ids = [r.order_id for r in requests if r.order_id]
+    orders_by_id = {}
+
+    if order_ids:
+        orders_by_id = {
+            order.id: order
+            for order in Order.query.filter(Order.id.in_(order_ids)).all()
+        }
+
+    refs = [r.ref for r in requests]
+    chat_id_by_ref = {}
+
+    if refs:
+        # Ordered so the first row seen for a given ref is the most
+        # recently updated one - matches _chat_id_for()'s single-row
+        # `.order_by(updated_at.desc()).first()`.
+        threads = (
+            SupportThread.query.filter(
+                SupportThread.order_reference.in_(refs)
+            )
+            .order_by(
+                SupportThread.order_reference,
+                SupportThread.updated_at.desc(),
+            )
+            .all()
+        )
+
+        for thread in threads:
+            chat_id_by_ref.setdefault(thread.order_reference, str(thread.id))
+
+    submissions_by_order_id = {}
+
+    if orders_by_id:
+        submissions = (
+            Submission.query.filter(
+                Submission.order_id.in_(orders_by_id.keys())
+            )
+            .filter(Submission.status != SubmissionStatus.PENDING_REVIEW)
+            .order_by(Submission.order_id, Submission.version.asc())
+            .all()
+        )
+
+        for submission in submissions:
+            submissions_by_order_id.setdefault(
+                submission.order_id, []
+            ).append(submission.to_dict())
+
+    return orders_by_id, chat_id_by_ref, submissions_by_order_id
+
 
 def list_orders(user, page=1, per_page=20, stage=None, status=None,
                 search=None):
@@ -237,10 +311,27 @@ def list_orders(user, page=1, per_page=20, stage=None, status=None,
 
     # Stage filtering happens after serialization since "stage" is a
     # derived value spanning two tables/columns, not a single indexed
-    # column we can filter on in SQL.
+    # column we can filter on in SQL. customer_id/search are already
+    # pushed into SQL above, and ServiceRequest.customer/assigned_user
+    # are eager (lazy="joined"), so this .all() itself is a single
+    # query - it's the per-row serialization below that used to add
+    # ~3 more queries per request until _bulk_order_context() batched
+    # them.
     all_requests = query.all()
 
-    serialized = [serialize_order(request) for request in all_requests]
+    orders_by_id, chat_id_by_ref, submissions_by_order_id = (
+        _bulk_order_context(all_requests)
+    )
+
+    serialized = [
+        serialize_order(
+            request,
+            order=orders_by_id.get(request.order_id),
+            chat_id=chat_id_by_ref.get(request.ref),
+            submissions=submissions_by_order_id.get(request.order_id, []),
+        )
+        for request in all_requests
+    ]
 
     # Tab counts are always computed over the whole (searched) set, not
     # the filtered slice - the portal needs every tab's badge even
@@ -304,6 +395,8 @@ def create_quote_request(user, fields, uploaded_files=None):
         saved_paths = save_uploaded_files(
             uploaded_files,
             UPLOAD_SUBDIR.format(user_id=user.id, request_id=reference),
+            allowed_extensions=ALLOWED_DOCUMENT_EXTENSIONS,
+            max_bytes=MAX_DOCUMENT_BYTES,
         )
 
         for path, upload in zip(saved_paths, uploaded_files):
@@ -599,10 +692,17 @@ def counter_quote(order_id, user, amount, notes=None):
 
 
 # ---------------------------------------------------------------------------
-# PAYMENT -> conversion to a real Order
+# PAYMENT (Paystack) - see orders/checkout_service.py
 # ---------------------------------------------------------------------------
 
-def pay_order(order_id, user, gateway, payment_reference=None):
+def pay_order(order_id, user):
+    """
+    Opens (or re-uses) a Paystack checkout for the Order created when
+    the customer accepted the quote. Settlement happens only after
+    Paystack confirms - checkout_service.fulfil_checkout().
+    """
+    from orders.checkout_service import start_checkout
+
     request = _get_owned_request_or_raise(order_id, user)
 
     if not request.order_id:
@@ -612,37 +712,24 @@ def pay_order(order_id, user, gateway, payment_reference=None):
 
     order = OrderService.get_order(request.order_id)
 
-    # NOTE: this records the payment as already-settled. No real
-    # payment-gateway integration (Stripe/Paystack/etc.) exists
-    # anywhere in this codebase yet - wire actual charge creation +
-    # webhook confirmation in here before relying on this in
-    # production. See config.py for the (currently unused) Paystack
-    # keys.
-    #
-    # The order itself was already created at quote-acceptance time
-    # (see accept_quote() above) - this just confirms payment against
-    # it via OrderService.mark_paid(), which also advances
-    # fulfillment_stage to "matching_writer".
-    OrderService.mark_paid(
-        order,
-        gateway=gateway,
-        payment_reference=payment_reference,
-    )
+    return request, start_checkout(order, user)
 
-    with transaction():
-        _log_activity(
-            order,
-            actor="customer",
-            title="Payment received",
-            detail=(
-                f"{order.currency} {order.amount} via {gateway}"
-                + (f" (ref {payment_reference})" if payment_reference else "")
-            ),
-        )
 
-        db.session.flush()
+def verify_payment(reference, user):
+    """
+    Called by the customer portal when Paystack redirects back. Returns
+    the checkout plus where the portal should send the customer next.
+    """
+    from orders.checkout_service import verify_for_customer
 
-        return request
+    checkout = verify_for_customer(reference, user)
+    order = db.session.get(Order, checkout.order_id)
+
+    return checkout, {
+        "sourceType": order.source_type if order else None,
+        "requestId": str(order.request_id) if order and order.request_id else None,
+        "materialId": str(order.material_id) if order and order.material_id else None,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -68,8 +68,13 @@ def create_app(config_name=None):
             status=401,
         )
 
-    @jwt.csrf_error_loader
-    def csrf_error(reason):
+    # flask-jwt-extended has no csrf loader hook; a failed double-submit
+    # check raises CSRFError, which Flask routes to this handler (it
+    # takes precedence over the library's default "unauthorized" reply).
+    from flask_jwt_extended.exceptions import CSRFError
+
+    @app.errorhandler(CSRFError)
+    def csrf_error(error):
         return error_response(
             "CSRF_ERROR",
             "CSRF validation failed.",
@@ -132,6 +137,7 @@ def create_app(config_name=None):
     )
     from exam_materials.routes import (
         customer_bp as exam_materials_customer_bp,
+        public_customer_bp as exam_materials_public_bp,
         exam_materials_bp,
     )
     from expert_applications.routes import (
@@ -147,6 +153,7 @@ def create_app(config_name=None):
         orders_bp,
     )
     from payments.routes import payments_bp, expert_bp as payments_expert_bp
+    from payments.webhooks import webhooks_bp as payment_webhooks_bp
     from platform_settings.routes import (
         admin_bp as platform_settings_admin_bp,
         public_bp as platform_settings_public_bp,
@@ -174,8 +181,17 @@ def create_app(config_name=None):
     app.register_blueprint(orders_expert_portal_bp)
     app.register_blueprint(payments_bp)
     app.register_blueprint(payments_expert_bp)
+    # Single Paystack webhook (customer orders + AssessDesk).
+    app.register_blueprint(payment_webhooks_bp)
     app.register_blueprint(requests_bp)
     app.register_blueprint(exam_materials_bp)
+    # The admin portal's service layer calls /admin/exam-materials; the
+    # original prefix stays for existing callers.
+    app.register_blueprint(
+        exam_materials_bp,
+        url_prefix="/api/v1/admin/exam-materials",
+        name="exam_materials_alias",
+    )
     app.register_blueprint(experts_bp)
     app.register_blueprint(experts_self_bp)
 
@@ -199,6 +215,7 @@ def create_app(config_name=None):
     # and integrity scanning. See docs/API.md in that frontend repo.
     app.register_blueprint(customer_orders_bp)
     app.register_blueprint(exam_materials_customer_bp)
+    app.register_blueprint(exam_materials_public_bp)
     app.register_blueprint(support_chat_bp)
     app.register_blueprint(integrity_reports_bp)
 

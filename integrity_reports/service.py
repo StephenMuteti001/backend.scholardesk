@@ -12,7 +12,7 @@ from extensions import db
 from utils.exceptions import NotFoundError
 from utils.pagination import paginate_query
 from utils.transaction import transaction
-from utils.uploads import save_uploaded_file
+from utils.uploads import ALLOWED_DOCUMENT_EXTENSIONS, MAX_DOCUMENT_BYTES, save_uploaded_file
 
 
 def _get_report_or_raise(report_id, user):
@@ -47,6 +47,8 @@ def submit_scan(user, fields):
     file_path = save_uploaded_file(
         fields.get("uploaded_file"),
         UPLOAD_SUBDIR.format(user_id=user.id),
+        allowed_extensions=ALLOWED_DOCUMENT_EXTENSIONS,
+        max_bytes=MAX_DOCUMENT_BYTES,
     )
 
     with transaction():

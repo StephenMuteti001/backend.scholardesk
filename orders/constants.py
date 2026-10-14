@@ -18,9 +18,11 @@ ORDER_GATEWAYS = (
     "Bank Transfer",
     "Wise",
     # Added for the customer-portal self-serve checkout
-    # (customer_orders/) pending a real payment-gateway integration -
-    # see customer_orders/service.py::pay_order().
+    # (customer_orders/) - orders are created carrying this
+    # placeholder and switched to "Paystack" once
+    # orders/checkout_service.py confirms the payment.
     "Online Payment",
+    "Paystack",
 )
 
 # Post-conversion fulfilment stages (Order.fulfillment_stage), as

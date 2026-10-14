@@ -11,6 +11,7 @@ src/lib/portal-data.ts in the customer-portal frontend repo exactly:
     POST   /orders/{id}/quote/reject
     POST   /orders/{id}/quote/counter
     POST   /orders/{id}/payments
+    POST   /orders/payments/{reference}/verify
     POST   /orders/{id}/cancel
     POST   /orders/{id}/refund-requests
     GET    /orders/{id}/submissions
@@ -29,6 +30,7 @@ from customer_orders.schemas import (
     validate_counter_quote,
     validate_list_orders,
     validate_pay_order,
+    validate_payment_reference,
     validate_quote_request,
     validate_reason_payload,
     validate_revision_request,
@@ -50,6 +52,7 @@ from customer_orders.service import (
     request_revision,
     serialize_order,
     update_order,
+    verify_payment,
 )
 from utils.authorization import get_current_user, require_roles
 from utils.exceptions import ServiceError
@@ -237,32 +240,51 @@ def counter_quote_route(order_id):
 
 
 # ---------------------------------------------------------------------------
-# PAYMENT
+# PAYMENT (Paystack)
+#
+# POST /orders/{id}/payments         -> opens a Paystack checkout and
+#                                       returns its authorizationUrl.
+# POST /orders/payments/{ref}/verify -> called when Paystack redirects
+#                                       the customer back; settles the
+#                                       order exactly once (the webhook
+#                                       in payments/webhooks.py does the
+#                                       same, whichever arrives first).
 # ---------------------------------------------------------------------------
 
 @customer_bp.post("/<uuid:order_id>/payments")
 @require_roles(*CUSTOMER_ROLES)
 def pay_order_route(order_id):
-    try:
-        user = get_current_user()
+    from orders.checkout_service import serialize_checkout
 
-        payload = request.get_json(silent=True) or {}
-        validated = validate_pay_order(payload)
+    user = get_current_user()
 
-        order = pay_order(
-            order_id,
-            user,
-            validated["gateway"],
-            validated["payment_reference"],
-        )
+    # The body is optional and never trusted for amount or gateway.
+    validate_pay_order(request.get_json(silent=True) or {})
 
-        return success_response(
-            {"data": serialize_order(order)},
-            status=201,
-        )
+    service_request, checkout = pay_order(order_id, user)
 
-    except (ValueError, ServiceError) as exc:
-        return _handle_service_error(exc)
+    return success_response(
+        {
+            "data": {
+                "checkout": serialize_checkout(checkout),
+                "order": serialize_order(service_request),
+            }
+        },
+        status=201,
+    )
+
+
+@customer_bp.post("/payments/<string:reference>/verify")
+@require_roles(*CUSTOMER_ROLES)
+def verify_payment_route(reference):
+    from orders.checkout_service import serialize_checkout
+
+    user = get_current_user()
+    checkout, target = verify_payment(validate_payment_reference(reference), user)
+
+    return success_response(
+        {"data": {"checkout": serialize_checkout(checkout), **target}}
+    )
 
 
 # ---------------------------------------------------------------------------

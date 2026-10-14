@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from support_chat.constants import (
     DEFAULT_AGENT_NAME,
+    MAX_PER_PAGE,
     REOPEN_ON_MESSAGE_FROM_STATUSES,
 )
 from support_chat.support_chat import ChatAuthor, ChatStatus, SupportMessage, SupportThread
@@ -47,12 +48,23 @@ def thread_to_dict(thread):
     }
 
 
-def list_threads(user):
-    threads = (
-        SupportThread.query.filter(SupportThread.customer_id == user.id)
-        .order_by(SupportThread.updated_at.desc())
-        .all()
-    )
+def list_threads(user, page=None, per_page=None):
+    query = SupportThread.query.filter(
+        SupportThread.customer_id == user.id
+    ).order_by(SupportThread.updated_at.desc())
+
+    if page is not None or per_page is not None:
+        per_page = min(per_page or MAX_PER_PAGE, MAX_PER_PAGE)
+        page = max(page or 1, 1)
+
+        threads = query.limit(per_page).offset(
+            (page - 1) * per_page
+        ).all()
+    else:
+        # No page/per_page supplied - keep returning the customer's
+        # whole thread list, as today's frontends expect, just capped
+        # so it can't grow unbounded.
+        threads = query.limit(MAX_PER_PAGE).all()
 
     return [thread_to_dict(thread) for thread in threads]
 
@@ -61,7 +73,7 @@ def get_thread(thread_id, user):
     return _get_thread_or_raise(thread_id, user)
 
 
-def list_messages(thread_id, user):
+def list_messages(thread_id, user, page=None, per_page=None):
     """
     Fetching messages marks the thread read for the customer, matching
     docs/API.md: "GET /support-chat/{chatId}/messages | Messages
@@ -75,7 +87,24 @@ def list_messages(thread_id, user):
 
         db.session.flush()
 
-    return [message.to_dict() for message in thread.messages]
+    query = SupportMessage.query.filter(
+        SupportMessage.thread_id == thread.id
+    ).order_by(SupportMessage.sent_at.asc())
+
+    if page is not None or per_page is not None:
+        per_page = min(per_page or MAX_PER_PAGE, MAX_PER_PAGE)
+        page = max(page or 1, 1)
+
+        messages = query.limit(per_page).offset(
+            (page - 1) * per_page
+        ).all()
+    else:
+        # No page/per_page supplied - same "whole thread" shape as
+        # today, just capped so a very long thread can't be loaded
+        # unbounded.
+        messages = query.limit(MAX_PER_PAGE).all()
+
+    return [message.to_dict() for message in messages]
 
 
 def start_thread(user, subject, order_reference=None):

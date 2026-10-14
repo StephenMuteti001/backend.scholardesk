@@ -24,8 +24,11 @@ from werkzeug.utils import secure_filename
 
 from utils.exceptions import ValidationError
 
+ALLOWED_DOCUMENT_EXTENSIONS = {".pdf", ".doc", ".docx", ".txt"}
+MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
 
-def save_uploaded_file(file_storage, subdir):
+
+def save_uploaded_file(file_storage, subdir, *, allowed_extensions=None, max_bytes=None):
     """
     Persist an uploaded file under UPLOAD_FOLDER/<subdir>/ with a
     collision-proof filename, and return the absolute path written.
@@ -52,6 +55,17 @@ def save_uploaded_file(file_storage, subdir):
             "Uploaded file must have a valid filename."
         )
 
+    extension = os.path.splitext(filename)[1].lower()
+    if allowed_extensions is not None and extension not in allowed_extensions:
+        raise ValidationError("Unsupported file type. Upload PDF, DOC, DOCX or TXT files only.")
+
+    stream = file_storage.stream
+    stream.seek(0, os.SEEK_END)
+    size = stream.tell()
+    stream.seek(0)
+    if max_bytes is not None and size > max_bytes:
+        raise ValidationError("Uploaded file must not exceed 25MB.")
+
     unique_name = f"{uuid.uuid4().hex}_{filename}"
 
     target_dir = os.path.join(upload_folder, subdir)
@@ -63,13 +77,13 @@ def save_uploaded_file(file_storage, subdir):
     return full_path
 
 
-def save_uploaded_files(file_storages, subdir):
+def save_uploaded_files(file_storages, subdir, **validation):
     """
     Persist multiple uploads (e.g. request.files.getlist(...)) under
     the same subdirectory and return the list of paths written.
     """
     return [
-        save_uploaded_file(file_storage, subdir)
+        save_uploaded_file(file_storage, subdir, **validation)
         for file_storage in file_storages
         if file_storage
     ]

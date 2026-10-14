@@ -356,9 +356,7 @@ def fulfil_purchase(reference, gateway_data=None):
         if purchase.status == PURCHASE_PAID:
             return purchase
 
-        purchase.gateway_response = {
-            k: data.get(k) for k in ("id", "status", "amount", "currency", "channel", "paid_at", "gateway_response")
-        }
+        purchase.gateway_response = paystack.summarise_gateway_data(data)
 
         if gw_status != "success":
             if gw_status in ("failed", "reversed"):

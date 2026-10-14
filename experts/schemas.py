@@ -1,3 +1,5 @@
+import uuid as uuid_module
+
 from marshmallow import (
     Schema,
     ValidationError,
@@ -6,6 +8,8 @@ from marshmallow import (
     validates,
     validates_schema,
 )
+
+from utils.exceptions import ValidationError as AppValidationError
 
 
 EXPERT_STATUSES = (
@@ -310,3 +314,74 @@ create_expert_schema = CreateExpertSchema()
 update_expert_schema = UpdateExpertSchema()
 
 expert_status_schema = ExpertStatusSchema()
+
+# ---------------------------------------------------------------------------
+# Bulk status / bulk delete
+#
+# Plain functions (not marshmallow) raising the project's
+# utils.exceptions.ValidationError, matching the style used by other
+# modules' schemas.py (e.g. customers/schemas.py::validate_bulk_update_customers)
+# so a bad payload here goes through the same global error-response
+# path (422 VALIDATION_ERROR) instead of the bare `payload["ids"]`
+# KeyError these two routes used to raise straight from Flask's index.
+# ---------------------------------------------------------------------------
+
+def _normalized_id_list(ids):
+    if not isinstance(ids, list) or not ids:
+        raise AppValidationError(
+            "The 'ids' field must be a non-empty array.",
+            {"field": "ids"},
+        )
+
+    normalized = []
+
+    for value in ids:
+        if value is None:
+            continue
+
+        value = str(value).strip()
+
+        if not value:
+            continue
+
+        try:
+            uuid_module.UUID(value)
+        except (ValueError, AttributeError, TypeError):
+            raise AppValidationError(
+                "ids must contain valid expert IDs.",
+                {"field": "ids"},
+            )
+
+        normalized.append(value)
+
+    if not normalized:
+        raise AppValidationError(
+            "At least one valid expert ID is required.",
+            {"field": "ids"},
+        )
+
+    return list(dict.fromkeys(normalized))
+
+
+def validate_bulk_status(payload):
+    if not isinstance(payload, dict):
+        raise AppValidationError("Request body must be an object.")
+
+    ids = _normalized_id_list(payload.get("ids"))
+
+    status = payload.get("status")
+
+    if not isinstance(status, str) or status not in EXPERT_STATUSES:
+        raise AppValidationError(
+            f"status must be one of: {', '.join(EXPERT_STATUSES)}.",
+            {"field": "status"},
+        )
+
+    return {"ids": ids, "status": status}
+
+
+def validate_bulk_ids(payload):
+    if not isinstance(payload, dict):
+        raise AppValidationError("Request body must be an object.")
+
+    return {"ids": _normalized_id_list(payload.get("ids"))}
