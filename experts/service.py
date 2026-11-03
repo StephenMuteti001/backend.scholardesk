@@ -230,7 +230,7 @@ class ExpertService:
                 e.active_jobs for e in experts
             ),
             "completed_jobs": sum(
-                e.completed for e in experts
+                (e.completed_orders or 0) for e in experts
             ),
             "payout_due": sum(
                 e.payout_due for e in experts

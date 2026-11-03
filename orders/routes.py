@@ -294,7 +294,7 @@ def list_order_interests(order_id):
 # pattern already in use).
 # ---------------------------------------------------------------------------
 
-from utils.roles import EXPERT_ROLES
+from utils.roles import CUSTOMER_ROLES, EXPERT_ROLES
 
 expert_bp = Blueprint(
     "orders_expert",
@@ -305,9 +305,24 @@ expert_bp = Blueprint(
 VALID_BUCKETS = ("new", "active", "completed", "cancelled")
 
 
+def _caller_is_customer():
+    """GET /api/v1/orders[/<id>] is shared with the customer portal
+    (customer_orders/routes.py). Flask dispatches to the first
+    registered rule (this one), so customer callers are delegated."""
+    from utils.authorization import get_current_user as _gcu
+    from utils.roles import CUSTOMER_ROLES as _CR
+    try:
+        return getattr(_gcu(), "role", None) in _CR
+    except Exception:
+        return False
+
+
 @expert_bp.get("")
-@require_roles(*EXPERT_ROLES)
+@require_roles(*EXPERT_ROLES, *CUSTOMER_ROLES)
 def list_my_assignments():
+    if _caller_is_customer():
+        from customer_orders.routes import list_orders_route
+        return list_orders_route()
     try:
         expert_user = get_current_user()
 
@@ -349,8 +364,11 @@ def list_my_assignments():
 
 
 @expert_bp.get("/<uuid:order_id>")
-@require_roles(*EXPERT_ROLES)
+@require_roles(*EXPERT_ROLES, *CUSTOMER_ROLES)
 def get_my_assignment(order_id):
+    if _caller_is_customer():
+        from customer_orders.routes import get_order_route
+        return get_order_route(order_id)
     try:
         expert_user = get_current_user()
 

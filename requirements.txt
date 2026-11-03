@@ -1,0 +1,14 @@
+# ScholarDesk API - pin exact versions with `pip freeze` from your server
+# before launch; these are the minimum versions this code was tested with.
+Flask>=3.0
+Flask-SQLAlchemy>=3.1
+Flask-Migrate>=4.0
+Flask-JWT-Extended>=4.6
+Flask-Marshmallow>=1.2
+marshmallow-sqlalchemy>=1.0
+Flask-Bcrypt>=1.0
+Flask-Cors>=4.0
+python-dotenv>=1.0
+psycopg[binary]>=3.1
+itsdangerous>=2.1
+gunicorn>=22.0

@@ -62,7 +62,7 @@ def to_minor(amount):
 
 def _callback_url():
     base = current_app.config.get(
-        "CUSTOMER_FRONTEND_URL", "https://customer.scholardesk.pro"
+        "CUSTOMER_FRONTEND_URL", "https://portal.scholardesk.pro"
     ).rstrip("/")
     return f"{base}/payments/callback"
 

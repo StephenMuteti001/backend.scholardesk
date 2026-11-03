@@ -3,12 +3,12 @@ from email.message import EmailMessage
 from email.utils import make_msgid
 from flask import current_app
 
-def send_email(to: str, subject: str, html: str):
+def send_email(to: str, subject: str, html: str, reply_to: str | None = None):
     msg = EmailMessage()
     msg["From"] = f"{current_app.config['EMAIL_FROM_NAME']} <{current_app.config['EMAIL_FROM_ADDRESS']}>"
     msg["To"] = to
     msg["Subject"] = subject
-    msg["Reply-To"] = current_app.config["EMAIL_FROM_ADDRESS"]
+    msg["Reply-To"] = reply_to or current_app.config["EMAIL_FROM_ADDRESS"]
     msg["Message-ID"] = make_msgid(domain="scholardesk.pro")
 
     msg.set_content("This is an automated message. Please view in HTML.")

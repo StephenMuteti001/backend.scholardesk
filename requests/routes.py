@@ -391,3 +391,36 @@ def issue_quote_route(request_id):
 
     except (ValueError, ServiceError) as exc:
         return _handle_service_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# REFUND (admin portal RequestWorkspace -> "Refund")
+# A request is only refundable once it has been converted to a paid
+# order; the refund itself is recorded on that order.
+# ---------------------------------------------------------------------------
+
+@requests_bp.post("/<uuid:request_id>/refund")
+@require_roles(*ADMIN_ROLES)
+def refund_request_route(request_id):
+    from extensions import db
+    from orders.order import Order
+    from orders.service import OrderService
+    from requests.request import ServiceRequest
+    from utils.exceptions import ConflictError, NotFoundError
+
+    service_request = db.session.get(ServiceRequest, request_id)
+    if not service_request:
+        raise NotFoundError("Request not found.")
+    if not service_request.order_id:
+        raise ConflictError(
+            "This request has not been paid yet, so there is nothing to refund."
+        )
+    payload = request.get_json(silent=True) or {}
+    payload.setdefault("reason", "administrative")
+    order = OrderService.refund_order(service_request.order_id, payload)
+    order = db.session.get(Order, order.id) if not isinstance(order, Order) else order
+    return success_response(
+        {"order": {"id": str(order.id), "status": order.status,
+                   "refunded_amount": float(order.refunded_amount or 0)}},
+        message="Refund recorded.",
+    )

@@ -17,6 +17,8 @@ an application-startup migration step just to seed one row.
 
 from datetime import datetime, timezone
 
+from sqlalchemy.dialects.postgresql import JSONB
+
 from extensions import db
 
 
@@ -40,6 +42,17 @@ class PlatformSettings(db.Model):
     hiring_notice = db.Column(
         db.String(500),
         nullable=True,
+    )
+
+    # Admin "Workspace settings" (general / services / notifications),
+    # read and written by the admin portal's Settings page via
+    # GET/PUT /api/v1/admin/settings. Stored as one JSON document and
+    # merged over WORKSPACE_DEFAULTS in platform_settings/workspace.py.
+    workspace = db.Column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
     )
 
     updated_by = db.Column(

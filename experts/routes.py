@@ -266,3 +266,63 @@ def bulk_delete():
 
 # POST    /experts/<id>/materials Assign exam material (future)
 # DELETE  /experts/<id>/materials/<material_id>   Remove material (future)
+
+# ---------------------------------------------------------------------------
+# LEADERBOARD (expert portal /leaderboard)
+#   GET /api/v1/profile/leaderboard     -> { leaderboard: [...] } top 50
+#   GET /api/v1/profile/leaderboard/me  -> { data: {...} } caller's row
+# Only first name + last initial are exposed (experts' privacy).
+# score = completed_orders * 10 + rating * 20
+# ---------------------------------------------------------------------------
+
+def _leaderboard_rows():
+    from experts.expert import Expert as _Expert
+    from users.user import User as _User
+    from extensions import db as _db
+
+    rows = (
+        _db.session.query(_Expert, _User)
+        .join(_User, _User.id == _Expert.user_id)
+        .all()
+    )
+    ranked = []
+    for expert, user in rows:
+        completed = int(expert.completed_orders or 0)
+        rating = float(expert.rating or 0)
+        ranked.append({
+            "id": str(expert.id),
+            "user_id": user.id,
+            "name": f"{(user.first_name or 'Expert').strip()} {((user.last_name or '')[:1] + '.') if user.last_name else ''}".strip(),
+            "completed_orders": completed,
+            "rating": round(rating, 2),
+            "score": round(completed * 10 + rating * 20, 1),
+        })
+    ranked.sort(key=lambda r: (-r["score"], -r["completed_orders"], r["name"]))
+    for i, row in enumerate(ranked, start=1):
+        row["rank"] = i
+    return ranked
+
+
+@self_bp.get("/profile/leaderboard")
+@require_roles(*EXPERT_ROLES)
+def leaderboard_route():
+    me = get_current_user()
+    rows = _leaderboard_rows()[:50]
+    out = []
+    for row in rows:
+        item = {k: v for k, v in row.items() if k != "user_id"}
+        item["is_me"] = row["user_id"] == me.id
+        out.append(item)
+    return success_response({"leaderboard": out})
+
+
+@self_bp.get("/profile/leaderboard/me")
+@require_roles(*EXPERT_ROLES)
+def leaderboard_me_route():
+    me = get_current_user()
+    for row in _leaderboard_rows():
+        if row["user_id"] == me.id:
+            item = {k: v for k, v in row.items() if k != "user_id"}
+            item["is_me"] = True
+            return success_response({"data": item})
+    return success_response({"data": None})

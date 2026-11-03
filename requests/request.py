@@ -205,7 +205,7 @@ class ServiceRequest(db.Model):
 
     order_id = db.Column(
         UUID(as_uuid=True),
-        ForeignKey("orders.id", ondelete="SET NULL"),
+        ForeignKey("orders.id", ondelete="SET NULL", use_alter=True, name="fk_service_requests_order_id"),
         nullable=True,
         index=True,
     )

@@ -78,7 +78,7 @@ class Config:
         "AUTH_FRONTEND_URL", "https://auth.scholardesk.pro"
     )
     CUSTOMER_FRONTEND_URL = os.getenv(
-        "CUSTOMER_FRONTEND_URL", "https://customer.scholardesk.pro"
+        "CUSTOMER_FRONTEND_URL", "https://portal.scholardesk.pro"
     )
     EXPERT_FRONTEND_URL = os.getenv(
         "EXPERT_FRONTEND_URL", "https://expert.scholardesk.pro"

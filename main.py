@@ -170,6 +170,11 @@ def create_app(config_name=None):
         public_bp as assessdesk_public_bp,
     )
     from assessdesk.cli import assessdesk_cli
+    from contact.routes import (
+        admin_bp as contact_admin_bp,
+        public_bp as contact_public_bp,
+    )
+    from platform_settings.workspace import workspace_bp
 
     # Auth / account management
     app.register_blueprint(users_bp)
@@ -231,6 +236,12 @@ def create_app(config_name=None):
     # Public GET is read by every ScholarDesk frontend with no auth.
     app.register_blueprint(platform_settings_public_bp)
     app.register_blueprint(platform_settings_admin_bp)
+    # Admin "Settings & Team" (workspace settings + admin team).
+    app.register_blueprint(workspace_bp)
+
+    # Public website Contact form + admin inbox.
+    app.register_blueprint(contact_public_bp)
+    app.register_blueprint(contact_admin_bp)
 
     # AssessDesk (desktop answer-credits product). Public surface is
     # used by assessdesk.scholardesk.pro (cookies) and the desktop app
@@ -255,11 +266,29 @@ def create_app(config_name=None):
             status=error.status_code,
         )
 
+    @app.errorhandler(ValueError)
+    def handle_value_error(error):
+        # Request validators (orders/schemas.py, exam_materials/...)
+        # raise ValueError with a user-facing message.
+        return error_response(
+            "VALIDATION_ERROR",
+            str(error) or "The request contains invalid data.",
+            status=422,
+        )
+
+    FRIENDLY_HTTP_MESSAGES = {
+        404: "The requested resource was not found.",
+        405: "This action is not supported for this resource.",
+        413: "The uploaded file is too large.",
+        415: "Unsupported file or content type.",
+        429: "Too many requests. Please wait a moment and try again.",
+    }
+
     @app.errorhandler(HTTPException)
     def handle_http_exception(error):
         return error_response(
             code=error.name.upper().replace(" ", "_"),
-            message=error.description,
+            message=FRIENDLY_HTTP_MESSAGES.get(error.code, error.description),
             status=error.code,
         )
 

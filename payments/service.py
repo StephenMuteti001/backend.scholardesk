@@ -24,6 +24,7 @@ from payments.constants import (
 
 # Adjust this import to your existing Expert model.
 from experts.expert import Expert
+from users.user import User
 
 
 def _validate_status_transition(
@@ -155,10 +156,12 @@ def list_payments(
     sort_by="due_at",
     direction="desc",
 ):
+    # Expert names/emails live on the linked User row (Expert's
+    # first_name/last_name/email are Python-only hybrids).
     expert_name = func.concat(
-        Expert.first_name,
+        User.first_name,
         " ",
-        Expert.last_name,
+        User.last_name,
     )
 
     query = (
@@ -170,6 +173,10 @@ def list_payments(
             Expert,
             Expert.id == Payment.expert_id,
         )
+        .outerjoin(
+            User,
+            User.id == Expert.user_id,
+        )
     )
 
     if search:
@@ -178,7 +185,7 @@ def list_payments(
         query = query.filter(
             or_(
                 expert_name.ilike(pattern),
-                Expert.email.ilike(pattern),
+                User.email.ilike(pattern),
                 Payment.payment_method.ilike(pattern),
                 Payment.status.ilike(pattern),
             )

@@ -49,7 +49,7 @@ class ForbiddenError(ServiceError):
 
     def __init__(
         self,
-        message="Administrator privileges required.",
+        message="You don't have permission to perform this action with this account.",
         details=None,
     ):
         super().__init__(
